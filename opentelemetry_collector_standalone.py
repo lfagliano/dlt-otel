@@ -246,8 +246,12 @@ class OpenTelemetryCollector(LogCollector):
         """Start a new trace step (span)"""
         if self._initialized and self._tracer:
             try:
-                # Start a child span for the step
-                span = self._tracer.start_as_current_span(name=step)
+                # Start a child span for the step as context manager
+                span_context = self._tracer.start_as_current_span(name=step)
+                # Enter the context manager
+                span = span_context.__enter__()
+                
+                # Add attributes
                 span.set_attribute("pipeline_name", pipeline.pipeline_name)
                 if pipeline.destination:
                     span.set_attribute("destination", pipeline.destination.destination_name)
@@ -255,8 +259,8 @@ class OpenTelemetryCollector(LogCollector):
                     span.set_attribute("dataset_name", pipeline.dataset_name)
                 span.set_attribute("transaction_id", trace.transaction_id)
 
-                # Add to stack
-                self._span_stack.append(span)
+                # Add context manager to stack (not the span itself)
+                self._span_stack.append(span_context)
             except Exception as e:
                 dlt_logger.warning(f"Failed to start OpenTelemetry trace step: {e}")
 
