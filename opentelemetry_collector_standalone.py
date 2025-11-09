@@ -82,6 +82,7 @@ class OpenTelemetryCollector(LogCollector):
         self._span_stack = []
         self._counter_instruments: Dict[str, Any] = {}
         self._initialized = False
+        self._pipeline_attributes: Dict[str, str] = {}  # Store pipeline context
 
     def _ensure_initialized(self, pipeline: SupportsPipeline) -> None:
         """Initialize OpenTelemetry if not already done"""
@@ -205,15 +206,20 @@ class OpenTelemetryCollector(LogCollector):
                     )
                     self._counter_instruments[counter_key] = counter
 
-                # Record the increment
+                # Record the increment with pipeline context
                 counter = self._counter_instruments[counter_key]
                 attributes = {}
+                
+                # Add pipeline context to metrics
+                attributes.update(self._pipeline_attributes)
+                
+                # Add collector-specific attributes
                 if label:
                     attributes["label"] = label
                 if message:
                     attributes["message"] = message
                 if total is not None:
-                    attributes["total"] = total
+                    attributes["total"] = str(total)  # Convert to string for OTLP
 
                 counter.add(inc, attributes)
             except Exception as e:
@@ -224,6 +230,17 @@ class OpenTelemetryCollector(LogCollector):
     ) -> None:
         """Start a new trace transaction"""
         self._ensure_initialized(pipeline)
+        
+        # Cache pipeline attributes for use in metrics
+        self._pipeline_attributes = {
+            "pipeline_name": pipeline.pipeline_name,
+            "step": step,
+        }
+        if pipeline.destination:
+            self._pipeline_attributes["destination"] = pipeline.destination.destination_name
+        if pipeline.dataset_name:
+            self._pipeline_attributes["dataset_name"] = pipeline.dataset_name
+        
         if self._initialized and self._tracer:
             try:
                 from opentelemetry.trace import SpanKind
@@ -253,6 +270,9 @@ class OpenTelemetryCollector(LogCollector):
         self, trace: PipelineTrace, step: TPipelineStep, pipeline: SupportsPipeline
     ) -> None:
         """Start a new trace step (span)"""
+        # Update step in pipeline attributes for metrics
+        self._pipeline_attributes["step"] = step
+        
         if self._initialized and self._tracer:
             try:
                 # Start a child span for the step as context manager
