@@ -142,13 +142,22 @@ class OpenTelemetryCollector(LogCollector):
             trace_provider = TracerProvider(resource=resource)
             trace.set_tracer_provider(trace_provider)
 
-            # Create OTLP span exporter
-            span_exporter = OTLPSpanExporter(endpoint=self.otlp_endpoint)
+            # Create OTLP span exporter with proper endpoint path
+            # HTTP OTLP exporters need full paths
+            traces_endpoint = self.otlp_endpoint
+            if not traces_endpoint.endswith('/v1/traces'):
+                traces_endpoint = traces_endpoint.rstrip('/') + '/v1/traces'
+            
+            span_exporter = OTLPSpanExporter(endpoint=traces_endpoint)
             span_processor = BatchSpanProcessor(span_exporter)
             trace_provider.add_span_processor(span_processor)
 
-            # Initialize metrics
-            metric_exporter = OTLPMetricExporter(endpoint=self.otlp_endpoint)
+            # Initialize metrics with proper endpoint path
+            metrics_endpoint = self.otlp_endpoint
+            if not metrics_endpoint.endswith('/v1/metrics'):
+                metrics_endpoint = metrics_endpoint.rstrip('/') + '/v1/metrics'
+            
+            metric_exporter = OTLPMetricExporter(endpoint=metrics_endpoint)
             metric_reader = PeriodicExportingMetricReader(metric_exporter)
             metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
             metrics.set_meter_provider(metrics_provider)
