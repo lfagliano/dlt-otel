@@ -219,14 +219,16 @@ class OpenTelemetryCollector(LogCollector):
             try:
                 from opentelemetry.trace import SpanKind
 
-                # Start a new transaction (root span)
-                self._current_transaction = self._tracer.start_as_current_span(
+                # Start a new transaction (root span) as context manager
+                span_context = self._tracer.start_as_current_span(
                     name=step,
                     kind=SpanKind.SERVER,
                 )
-                self._span_stack = [self._current_transaction]
+                # Enter the context manager
+                self._current_transaction = span_context.__enter__()
+                self._span_stack = [span_context]
 
-                # Add attributes
+                # Add attributes to the span
                 self._current_transaction.set_attribute("pipeline_name", pipeline.pipeline_name)
                 if pipeline.destination:
                     self._current_transaction.set_attribute(
@@ -270,10 +272,14 @@ class OpenTelemetryCollector(LogCollector):
         if self._initialized and self._span_stack:
             try:
                 from opentelemetry.trace import Status, StatusCode
+                from opentelemetry import trace as trace_api
 
-                # Pop and end the current span
-                span = self._span_stack.pop()
-                if span:
+                # Pop the context manager
+                span_context = self._span_stack.pop()
+                if span_context:
+                    # Get the actual span from current context
+                    span = trace_api.get_current_span()
+                    
                     # Add step info as attributes
                     if step.step_exception:
                         span.set_status(Status(StatusCode.ERROR, step.step_exception))
@@ -284,7 +290,8 @@ class OpenTelemetryCollector(LogCollector):
                         elapsed = (step.finished_at - step.started_at).total_seconds()
                         span.set_attribute("elapsed_seconds", elapsed)
 
-                    span.__exit__(None, None, None)
+                    # Exit the context manager
+                    span_context.__exit__(None, None, None)
             except Exception as e:
                 dlt_logger.warning(f"Failed to end OpenTelemetry trace step: {e}")
 
@@ -296,13 +303,13 @@ class OpenTelemetryCollector(LogCollector):
             try:
                 from opentelemetry.trace import Status, StatusCode
 
-                # End all remaining spans
-                while self._span_stack:
-                    span = self._span_stack.pop()
-                    if span:
-                        span.__exit__(None, None, None)
+                # End all remaining spans (child spans)
+                while len(self._span_stack) > 1:  # Keep the root span for last
+                    span_context = self._span_stack.pop()
+                    if span_context:
+                        span_context.__exit__(None, None, None)
 
-                # End the transaction
+                # Add attributes to the root transaction span
                 if self._current_transaction:
                     if trace.finished_at and trace.started_at:
                         elapsed = (trace.finished_at - trace.started_at).total_seconds()
@@ -316,8 +323,12 @@ class OpenTelemetryCollector(LogCollector):
                     else:
                         self._current_transaction.set_status(Status(StatusCode.OK))
 
-                    self._current_transaction.__exit__(None, None, None)
-                    self._current_transaction = None
+                # End the root transaction (pop from stack and exit)
+                if self._span_stack:
+                    root_context = self._span_stack.pop()
+                    root_context.__exit__(None, None, None)
+                    
+                self._current_transaction = None
             except Exception as e:
                 dlt_logger.warning(f"Failed to end OpenTelemetry trace: {e}")
 
