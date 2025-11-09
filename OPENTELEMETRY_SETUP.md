@@ -135,18 +135,46 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 -------------------------- Extract test_opentelemetry --------------------------
 Resources: 1/1 (100.0%) | Time: 0.02s | Rate: 59.92/s
 test_data: 10  | Time: 0.02s | Rate: 649.22/s
+Mem: 245.67 MB (42.5%) | CPU: 15.2%
 ```
 
 ### In OpenTelemetry Backend
-- **Traces**: Pipeline transactions with extract/normalize/load spans
-- **Metrics**: `dlt.Resources`, `dlt.Items`, `dlt.Files`, `dlt.Jobs` counters
-- **Attributes**: `pipeline_name`, `destination`, `dataset_name`, `transaction_id`
+
+#### Traces
+- Pipeline transactions with extract/normalize/load spans
+- **Attributes**: `pipeline_name`, `destination`, `dataset_name`, `transaction_id`, `elapsed_seconds`
+
+#### Metrics
+
+**Pipeline Counters:**
+- `dlt.Resources` - Number of resources processed
+- `dlt.{resource_name}` - Items from each resource (e.g., `dlt.users`, `dlt.orders`)
+- `dlt.Items` - Total items normalized
+- `dlt.Files` - Files created during normalization
+- `dlt.Jobs` - Load jobs executed
+
+**System Metrics (if psutil installed):**
+- `dlt.system.memory_usage_mb` - Process memory in MB
+- `dlt.system.memory_percent` - System memory percentage
+- `dlt.system.cpu_percent` - Process CPU percentage
+
+**Attributes on all metrics:**
+- `pipeline_name`, `destination`, `dataset_name`, `step`
+- Plus optional: `label`, `total`, `message`
 
 ## Dependencies
 
-Install OpenTelemetry packages:
+### Required for OpenTelemetry features:
 ```bash
 pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp
 ```
 
-The collector will work without these (logging only), but OpenTelemetry features won't be available.
+### Optional for system metrics:
+```bash
+pip install psutil
+```
+
+**Notes:**
+- Without OpenTelemetry packages: Collector works as a regular LogCollector (console logging only)
+- Without psutil: System metrics (CPU/memory) won't be collected, but pipeline metrics still work
+- To disable system metrics collection: `OpenTelemetryCollector(dump_system_stats=False)`

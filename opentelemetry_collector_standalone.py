@@ -81,8 +81,10 @@ class OpenTelemetryCollector(LogCollector):
         self._current_transaction = None
         self._span_stack = []
         self._counter_instruments: Dict[str, Any] = {}
+        self._gauge_instruments: Dict[str, Any] = {}
         self._initialized = False
         self._pipeline_attributes: Dict[str, str] = {}  # Store pipeline context
+        self._dump_system_stats = dump_system_stats
 
     def _ensure_initialized(self, pipeline: SupportsPipeline) -> None:
         """Initialize OpenTelemetry if not already done"""
@@ -365,9 +367,66 @@ class OpenTelemetryCollector(LogCollector):
             except Exception as e:
                 dlt_logger.warning(f"Failed to end OpenTelemetry trace: {e}")
 
+    def on_log(self) -> None:
+        """Override to add system metrics to OpenTelemetry"""
+        # Call parent to log counters
+        super().on_log()
+        # Send system stats to OpenTelemetry if enabled
+        if self._dump_system_stats and self._initialized and self._meter:
+            self._send_system_metrics()
+    
+    def _send_system_metrics(self) -> None:
+        """Send system metrics (CPU, memory) to OpenTelemetry"""
+        try:
+            import psutil
+            import os as os_module
+
+            process = psutil.Process(os_module.getpid())
+            mem_info = process.memory_info()
+            
+            # Get current system stats
+            current_mem_mb = mem_info.rss / (1024**2)  # Convert to MB
+            mem_percent = psutil.virtual_memory().percent
+            cpu_percent = process.cpu_percent()
+            
+            # Create histogram instruments for system metrics (better for gauge-like values)
+            if "memory_usage_mb" not in self._gauge_instruments:
+                self._gauge_instruments["memory_usage_mb"] = self._meter.create_histogram(
+                    name="dlt.system.memory_usage_mb",
+                    description="Process memory usage in MB",
+                    unit="MB",
+                )
+            
+            if "memory_usage_percent" not in self._gauge_instruments:
+                self._gauge_instruments["memory_usage_percent"] = self._meter.create_histogram(
+                    name="dlt.system.memory_percent",
+                    description="System memory usage percentage",
+                    unit="percent",
+                )
+            
+            if "cpu_usage_percent" not in self._gauge_instruments:
+                self._gauge_instruments["cpu_usage_percent"] = self._meter.create_histogram(
+                    name="dlt.system.cpu_percent",
+                    description="Process CPU usage percentage",
+                    unit="percent",
+                )
+            
+            # Record current values with pipeline context
+            attributes = dict(self._pipeline_attributes)
+            
+            self._gauge_instruments["memory_usage_mb"].record(current_mem_mb, attributes)
+            self._gauge_instruments["memory_usage_percent"].record(mem_percent, attributes)
+            self._gauge_instruments["cpu_usage_percent"].record(cpu_percent, attributes)
+            
+        except ImportError:
+            pass  # psutil not available
+        except Exception as e:
+            dlt_logger.warning(f"Failed to send system metrics to OpenTelemetry: {e}")
+
     def _stop(self) -> None:
         """Stop collecting and flush metrics"""
         # Clear counter instruments
         self._counter_instruments.clear()
+        self._gauge_instruments.clear()
         # Call parent to maintain logging behavior
         super()._stop()
